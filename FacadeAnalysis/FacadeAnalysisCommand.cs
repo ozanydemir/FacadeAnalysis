@@ -21,55 +21,17 @@ namespace FacadeAnalysis
     {
         public override string EnglishName => "FacadeAnalysisCommand";
 
-        //protected override Result RunCommand(RhinoDoc doc, RunMode mode)
-        //{
-        //    // Kullanıcıdan yüzey seçimi alın
-        //    var objectSelection = new GetObject();
-        //    objectSelection.SetCommandPrompt("Eğrilik analizi için panelleri seçin.");
-        //    objectSelection.GeometryFilter = ObjectType.Surface;
-        //    objectSelection.GroupSelect = false;
-        //    objectSelection.SubObjectSelect = true;
-        //    //objectSelection.GroupSelect = true;
-        //    //objectSelection.SubObjectSelect = false;
-        //    objectSelection.GetMultiple(1, 0);
-
-        //    if (objectSelection.CommandResult() != Result.Success)
-        //        return objectSelection.CommandResult();
-
-        //    foreach (var objRef in objectSelection.Objects())
-        //    {
-        //        var brep = objRef.Brep();
-        //        if (brep == null)
-        //            continue;
-
-        //        //Her bir brep için curcature değerini hesapla
-        //        double curvatureValue = CalculateCurvatureValue(brep);
-
-        //        // Curvature değerine göre renk belirle
-        //        var color = (curvatureValue > 3500) ? System.Drawing.Color.Green : System.Drawing.Color.Red;
-
-        //        // Brep'in rengini değiştir
-        //        var obj = doc.Objects.Find(objRef.ObjectId);
-        //        if (obj != null)
-        //        {
-        //            obj.Attributes.ColorSource = ObjectColorSource.ColorFromObject;
-        //            obj.Attributes.ObjectColor = color;
-        //            obj.CommitChanges();
-        //        }
-        //    }
-        //    doc.Views.Redraw();
-        //    return Result.Success;
-        //}
-
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-
+            // Değişken tanımlamaları
             double totalGreenArea = 0;
             int greenCount = 0;
             double totalRedArea = 0;
             int redCount = 0;
             int totalSelectedCount = 0;
 
+            List<Guid> greenObjects = new List<Guid>();
+            List<Guid> redObjects = new List<Guid>();
 
             var objectSelection = new GetObject();
             objectSelection.SetCommandPrompt("Eğrilik analizi için bir panel seçin.");
@@ -80,16 +42,32 @@ namespace FacadeAnalysis
             if (objectSelection.CommandResult() != Result.Success)
                 return objectSelection.CommandResult();
 
+            totalSelectedCount = objectSelection.ObjectCount;
+
             foreach (var objRef in objectSelection.Objects())
             {
                 var brep = objRef.Brep();
                 if (brep == null) continue;
 
-                string panelName = objRef.Object().Name;
-
                 BrepFace mainFace = null;
                 double maxArea = 0.0;
-                int totalPanelCount = objectSelection.Objects().Length;
+
+                // Brep'in köşe noktalarını al
+                Point3d[] corners = brep.DuplicateVertices();
+                double maxDistance = 0.0;
+
+                // Köşe noktaları arasındaki en büyük mesafeyi bul
+                for (int i = 0; i < corners.Length; i++)
+                {
+                    for (int j = i + 1; j < corners.Length; j++)
+                    {
+                        double distance = corners[i].DistanceTo(corners[j]);
+                        if (distance > maxDistance)
+                        {
+                            maxDistance = distance;
+                        }
+                    }
+                }
 
                 foreach (var face in brep.Faces)
                 {
@@ -104,74 +82,85 @@ namespace FacadeAnalysis
 
                 if (mainFace != null)
                 {
-                    // Ana yüzey üzerinde eğrilik analizi yap
                     double curvatureValue = CalculateCurvatureValue(mainFace.DuplicateFace(false));
 
-                    // Eğrilik değerine göre renk belirle
-                    var color = (curvatureValue > 3500) ? System.Drawing.Color.Green : System.Drawing.Color.Red;
-                    string layerName = (color == System.Drawing.Color.Green) ? "GREEN" : "RED";
+                    //Renk belirleme kriterleri
+                    bool isCurvatureOk = curvatureValue > 3500;
+                    bool isDiameterOk = maxDistance <= 5399; // mm cinsinden
 
-                    //Yeşile boyanan nesnelerin alanı ve toplam sayısını hesapla
-                    if(color == System.Drawing.Color.Green)
-                    {
-                        var faceArea = AreaMassProperties.Compute(mainFace).Area;
-                        totalGreenArea += faceArea;
-                        string formattedGreenArea = totalGreenArea.ToString("N2");
-                        greenCount++;
-                    }
+                    Log($"Çap Ölçüsü: {maxDistance}");
+                    var color = (isCurvatureOk & isDiameterOk) ? System.Drawing.Color.Green : System.Drawing.Color.Red;
 
-                    //Yeşile boyanan nesnelerin alanı ve toplam sayısını hesapla
-                    if (color == System.Drawing.Color.Red)
-                    {
-                        var faceArea = AreaMassProperties.Compute(mainFace).Area;
-                        totalRedArea += faceArea;
-                        string formattedRedArea = totalRedArea.ToString("N2");
-                        redCount++;
-                    }
-
-                    //Katmanı kontrol et ve yoksa oluştur
-                    Layer layer = doc.Layers.FindName(layerName);
-                    int layerIndex;
-
-                    if(layer == null)
-                    {
-                        layer = new Layer
-                        {
-                            Name = layerName,
-                            Color = color
-                        };
-                        layerIndex = doc.Layers.Add(layer);
-                    }
-                    else
-                    {
-                        layerIndex = layer.Index;
-                    }
-                    // Seçilen nesnenin renk özelliklerini güncelle
                     var obj = objRef.Object();
-                    obj.Attributes.LayerIndex = layerIndex;
                     obj.Attributes.ColorSource = ObjectColorSource.ColorFromObject;
                     obj.Attributes.ObjectColor = color;
                     obj.CommitChanges();
 
+                    if (color == System.Drawing.Color.Green)
+                    {
+                        totalGreenArea += maxArea;
+                        greenCount++;
+                        greenObjects.Add(objRef.ObjectId);
+                    }
+                    else
+                    {
+                        totalRedArea += maxArea;
+                        redCount++;
+                        redObjects.Add(objRef.ObjectId);
+                    }
                 }
-
-                
             }
 
+            // Yeşil ve Kırmızı nesneleri grupla
+            GroupObjects(doc, greenObjects, "GreenGroup");
+            GroupObjects(doc, redObjects, "RedGroup");
 
-            //Total Veri Notu
-            
-            string notes = doc.Notes;
-            string totalCount = $"Seçilen Toplam Panel Sayısı: {totalSelectedCount}";
-            string noteGreen = $"Yeşil panellerin toplam alanı: {totalGreenArea} m²\nToplam Adedi: {greenCount}";
-            string noteRed = $"Kırmızı panellerin toplam alanı: {totalRedArea} m²\nToplam Adedi: {redCount}";
-            notes += totalCount + "\n" + noteGreen + "\n" + noteRed;
-
+            // Notları oluştur ve göster
+            string notes = $"Seçilen Toplam Panel Sayısı: {totalSelectedCount}\n" +
+                           $"Yeşil panellerin toplam alanı: {totalGreenArea:N2} m²\nToplam Adedi: {greenCount}\n" +
+                           $"Kırmızı panellerin toplam alanı: {totalRedArea:N2} m²\nToplam Adedi: {redCount}";
             doc.Notes = notes;
-            RhinoApp.RunScript("Notes", false);
 
             doc.Views.Redraw();
             return Result.Success;
+        }
+
+        //Gruplama Fonksiyonu
+        private int FindOrCreateNewGroup(RhinoDoc doc, string groupName)
+        {
+            int grupIndex = doc.Groups.Find(groupName);
+            if(grupIndex == -2147483647)
+            {
+                grupIndex = doc.Groups.Add(groupName);
+            }
+
+            return grupIndex;
+        }
+
+        private void GroupObjects(RhinoDoc doc, List<Guid> objectIds, string groupName)
+        {
+
+            int groupIndex = FindOrCreateNewGroup(doc, groupName);
+
+            // Mevcut grup üyelerinin ID'lerini al
+            var groupMemberIds = new HashSet<Guid>();
+            var groupMembers = doc.Groups.GroupMembers(groupIndex);
+            if (groupMembers != null)
+            {
+                foreach (var member in groupMembers)
+                {
+                    groupMemberIds.Add(member.Id);
+                }
+            }
+
+            // Her bir nesne ID'si için grup üyeliğini kontrol et ve gerekirse gruba ekle
+            foreach (var id in objectIds)
+            {
+                if (!groupMemberIds.Contains(id))
+                {
+                    doc.Groups.AddToGroup(groupIndex, id);
+                }
+            }
         }
 
         private double CalculateCurvatureValue(Brep brep)
