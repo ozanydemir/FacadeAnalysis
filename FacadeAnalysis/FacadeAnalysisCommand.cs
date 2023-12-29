@@ -86,7 +86,7 @@ namespace FacadeAnalysis
 
                     //Renk belirleme kriterleri
                     bool isCurvatureOk = curvatureValue > 3500;
-                    bool isDiameterOk = maxDistance <= 5399; // mm cinsinden
+                    bool isDiameterOk = maxDistance <= 5500; // mm cinsinden
 
                     Log($"Çap Ölçüsü: {maxDistance}");
                     var color = (isCurvatureOk & isDiameterOk) ? System.Drawing.Color.Green : System.Drawing.Color.Red;
