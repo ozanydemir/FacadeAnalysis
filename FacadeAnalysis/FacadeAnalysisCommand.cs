@@ -23,7 +23,8 @@ namespace FacadeAnalysis
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            // Değişken tanımlamaları
+            // Initialize area and count variables for green and red classification
+            // Yeşil ve kırmızı sınıflandırması için alan ve sayı değişkenlerini başlat
             double totalGreenArea = 0;
             int greenCount = 0;
             double totalRedArea = 0;
@@ -33,8 +34,10 @@ namespace FacadeAnalysis
             List<Guid> greenObjects = new List<Guid>();
             List<Guid> redObjects = new List<Guid>();
 
+            // Set up object selection parameters
+            // Nesne seçimi parametrelerini ayarla
             var objectSelection = new GetObject();
-            objectSelection.SetCommandPrompt("Eğrilik analizi için bir panel seçin.");
+            objectSelection.SetCommandPrompt("Select a panel for curvature analysis.");
             objectSelection.GeometryFilter = ObjectType.Brep;
             objectSelection.SubObjectSelect = false;
             objectSelection.GetMultiple(1, 0);
@@ -52,10 +55,12 @@ namespace FacadeAnalysis
                 BrepFace mainFace = null;
                 double maxArea = 0.0;
 
+                // Retrieve the corner points of the Brep
                 // Brep'in köşe noktalarını al
                 Point3d[] corners = brep.DuplicateVertices();
                 double maxDistance = 0.0;
 
+                // Find the maximum distance between corner points
                 // Köşe noktaları arasındaki en büyük mesafeyi bul
                 for (int i = 0; i < corners.Length; i++)
                 {
@@ -84,11 +89,12 @@ namespace FacadeAnalysis
                 {
                     double curvatureValue = CalculateCurvatureValue(mainFace.DuplicateFace(false));
 
-                    //Renk belirleme kriterleri
+                    // Set the color criteria
+                    // Renk belirleme kriterleri
                     bool isCurvatureOk = curvatureValue > 3500;
-                    bool isDiameterOk = maxDistance <= 5500; // mm cinsinden
+                    bool isDiameterOk = maxDistance <= 5500; // in mm
 
-                    Log($"Çap Ölçüsü: {maxDistance}");
+                    Log($"Diameter Measure: {maxDistance}");
                     var color = (isCurvatureOk & isDiameterOk) ? System.Drawing.Color.Green : System.Drawing.Color.Red;
 
                     var obj = objRef.Object();
@@ -111,37 +117,40 @@ namespace FacadeAnalysis
                 }
             }
 
+            // Group the green and red objects
             // Yeşil ve Kırmızı nesneleri grupla
             GroupObjects(doc, greenObjects, "GreenGroup");
             GroupObjects(doc, redObjects, "RedGroup");
 
+            // Create and display notes
             // Notları oluştur ve göster
-            string notes = $"Seçilen Toplam Panel Sayısı: {totalSelectedCount}\n" +
-                           $"Yeşil panellerin toplam alanı: {totalGreenArea:N2} m²\nToplam Adedi: {greenCount}\n" +
-                           $"Kırmızı panellerin toplam alanı: {totalRedArea:N2} m²\nToplam Adedi: {redCount}";
+            string notes = $"Total Selected Panels: {totalSelectedCount}\n" +
+                           $"Total area of green panels: {totalGreenArea:N2} m²\nTotal Count: {greenCount}\n" +
+                           $"Total area of red panels: {totalRedArea:N2} m²\nTotal Count: {redCount}";
             doc.Notes = notes;
 
             doc.Views.Redraw();
             return Result.Success;
         }
 
-        //Gruplama Fonksiyonu
+        // Grouping Function
+        // Gruplama Fonksiyonu
         private int FindOrCreateNewGroup(RhinoDoc doc, string groupName)
         {
-            int grupIndex = doc.Groups.Find(groupName);
-            if(grupIndex == -2147483647)
+            int groupIndex = doc.Groups.Find(groupName);
+            if (groupIndex == -2147483647)
             {
-                grupIndex = doc.Groups.Add(groupName);
+                groupIndex = doc.Groups.Add(groupName);
             }
 
-            return grupIndex;
+            return groupIndex;
         }
 
         private void GroupObjects(RhinoDoc doc, List<Guid> objectIds, string groupName)
         {
-
             int groupIndex = FindOrCreateNewGroup(doc, groupName);
 
+            // Retrieve the IDs of existing group members
             // Mevcut grup üyelerinin ID'lerini al
             var groupMemberIds = new HashSet<Guid>();
             var groupMembers = doc.Groups.GroupMembers(groupIndex);
@@ -153,6 +162,7 @@ namespace FacadeAnalysis
                 }
             }
 
+            // Check each object ID for group membership and add to group if necessary
             // Her bir nesne ID'si için grup üyeliğini kontrol et ve gerekirse gruba ekle
             foreach (var id in objectIds)
             {
@@ -161,79 +171,81 @@ namespace FacadeAnalysis
                     doc.Groups.AddToGroup(groupIndex, id);
                 }
             }
-        }
 
+            
+
+        }
         private double CalculateCurvatureValue(Brep brep)
         {
+            // Start logging
             // Log ekleme
             Log("CalculateCurvatureValue başlatılıyor.");
 
+            // Get the default CurvatureAnalysisSettingsState object
             // Varsayılan CurvatureAnalysisSettingsState nesnesini al
             CurvatureAnalysisSettingsState settings = CurvatureAnalysisSettings.GetCurrentState();
-            settings.Style = CurvatureStyle.MinRadius; // Style'ı MinRadius olarak ayarla
+            settings.Style = CurvatureStyle.MinRadius; // Set the Style to MinRadius
+                                                       // Style'ı MinRadius olarak ayarla
 
             var meshingParameters = MeshingParameters.DefaultAnalysisMesh;
-                       
-            //Meshing Parameters Check
+
+            // Log meshing parameters
+            // Meshing parametrelerini logla
             Log($"MaxEdgeLen: {meshingParameters.MaximumEdgeLength}, GridAngle: {meshingParameters.GridAngle}, GridAspectRatio: {meshingParameters.GridAspectRatio}, GridMinCount: {meshingParameters.GridMinCount}, RefineMesh: {meshingParameters.RefineGrid}");
 
             var meshes = Mesh.CreateFromBrep(brep, meshingParameters);
             if (meshes == null || meshes.Length == 0)
             {
-                Log("Mesh oluşturulamadı.");
-                return 0; // Eğer mesh oluşturulamazsa 0 dön
+                Log("Mesh could not be created.");
+                // If mesh cannot be created, return 0
+                // Eğer mesh oluşturulamazsa 0 dön
+                return 0;
             }
 
+            // Check the validity of the meshes
             // Meshlerin geçerliliğini kontrol et
             foreach (var mesh in meshes)
             {
                 if (!mesh.IsValid)
                 {
-                    Log("Geçersiz mesh tespit edildi.");
+                    Log("Invalid mesh detected.");
+                    // If an invalid mesh is found, return 0
+                    // Geçersiz mesh tespit edilirse, 0 dön
                     return 0;
                 }
-            }          
-
-            // Log: Mesh bilgileri
-            //foreach (var mesh in meshes)
-            //{
-            //    Log($"Mesh bilgileri: Vertex sayısı = {mesh.Vertices.Count}, Face sayısı = {mesh.Faces.Count}");
-            //}
-
-            // Log: Settings öncesi durumu
-            //Log($"Settings ayarları: Style = {settings.Style}, MinRadiusRange = {settings.MinRadiusRange}, MaxRadiusRange = {settings.MaxRadiusRange}");
+            }
 
             try
             {
                 bool autoRangeResult = CurvatureAnalysisSettings.CalculateCurvatureAutoRange(meshes, ref settings);
-                //Log($"CalculateCurvatureAutoRange sonucu: {autoRangeResult}");
-
                 if (autoRangeResult)
                 {
+                    // Successful calculation
                     // Başarılı hesaplama
                     var minRadiusRange = settings.MinRadiusRange;
-                    Log($"MinRadiusRange minimum değeri: {minRadiusRange.T0}");
+                    Log($"MinRadiusRange minimum value: {minRadiusRange.T0}");
+                    // Return the minimum value of MinRadiusRange
+                    // MinRadiusRange'nin minimum değerini dön
                     return minRadiusRange.T0;
                 }
                 else
                 {
+                    // Unsuccessful calculation
                     // Başarısız hesaplama
-                    Log("Auto range hesaplaması başarısız oldu.");
+                    Log("Auto range calculation failed.");
                     return 0;
                 }
             }
             catch (Exception ex)
             {
-                Log($"Hata: {ex.Message}");
+                Log($"Error: {ex.Message}");
                 return 0;
             }
-
         }
 
         private void Log(string message)
         {
             RhinoApp.WriteLine(message);
         }
-
     }
 }
